@@ -38,6 +38,8 @@ class Offline {
     this.exitCode = 0;
     this.clients = new Map();
     this.wsActions = {};
+    this.funsWithNoEvent = {};
+    this.connectAuth;
 
     this.commands = {
       offline: {
@@ -450,7 +452,7 @@ class Offline {
 
     const doAction = (ws, connectionId, name, event, context, doDeafultAction/* , onError */) => {
       const sendError = err => {
-        if (ws.readyState === /* OPEN */1) ws.send(JSON.stringify({ message:'Internal server error', connectionId, requestId:'1234567890' })); 
+        if (ws.readyState === 1 /* WebSocket.OPEN */) ws.send(JSON.stringify({ message:'Internal server error', connectionId, requestId:'1234567890' })); 
         debugLog(`Error in handler of action ${action}`, err);
       };
       let action = this.wsActions[name];
@@ -473,42 +475,43 @@ class Offline {
         });
       }
     };
+
+    // const scheme = (server, options)=>{
+    //   return {
+    //       authenticate: (request, h)=>{
+    //         console.log('hello:');
+    //         console.log(request.headers);
+
+    //         // const authorization = request.headers['auth'];
+    //         // if (!authorization||authorization!='allow') {
+    //         //   console.log('NOT authenticate:')
+    //         //   throw Boom.unauthorized(null, 'websocket');
+    //         // }
+    //         console.log('authenticate:')
+
+    //         return h.authenticated({ credentials: {} });
+    //       }
+    //   };
+    // };
+    // this.wsServer.auth.scheme('websocket', scheme);
+    // this.wsServer.auth.strategy('connect', 'websocket');
     
     this.wsServer.route({
       method: 'POST', 
       path: '/',
       config: {
+        // auth: 'connect',
         payload: { output: 'data', parse: true, allow: 'application/json' },
         plugins: {
           websocket: {
             only: true,
-            initially: false,
+            initially: true,
             connect: ({ ws, req }) => {
-              const parseQuery = queryString => {
-                const query = {}; const parts = queryString.split('?');
-                if (parts.length < 2) return {};
-                const pairs = parts[1].split('&');
-                pairs.forEach(pair => {
-                  const kv = pair.split('=');
-                  query[decodeURIComponent(kv[0])] = decodeURIComponent(kv[1] || '');
-                });
-
-                return query;
-              };
-
-              const queryStringParameters = parseQuery(req.url);
-              const connection = { connectionId:randomId(), connectionTime:Date.now() };
-              debugLog(`connect:${connection.connectionId}`);
-
-              this.clients.set(ws, connection);
-              let event = wsHelpers.createConnectEvent('$connect', 'CONNECT', connection, this.options);
-              if (Object.keys(queryStringParameters).length > 0) event = { queryStringParameters, ...event };
-              const context = wsHelpers.createContext('$connect');
-
-              doAction(ws, connection.connectionId, '$connect', event, context);
+              
             },
             disconnect: ({ ws }) => {
               const connection = this.clients.get(ws);
+              if (!connection) return;
               debugLog(`disconnect:${connection.connectionId}`);
               this.clients.delete(ws);
               const event = wsHelpers.createDisconnectEvent('$disconnect', 'DISCONNECT', connection, this.options);
@@ -519,11 +522,75 @@ class Offline {
           },
         },
       },
-      handler: (request, h) => {
+      handler: async (request, h) => {
+        console.log(`handler:${request.url}`);
         const { initially, ws } = request.websocket();
-        if (!request.payload || initially) return h.response().code(204);
+        if (initially) {
+          const parseQuery = queryString => {
+            const query = {}; const parts = queryString.split('?');
+            if (parts.length < 2) return {};
+            const pairs = parts[1].split('&');
+            pairs.forEach(pair => {
+              const kv = pair.split('=');
+              query[decodeURIComponent(kv[0])] = decodeURIComponent(kv[1] || '');
+            });
+
+            return query;
+          };
+
+          if (!this.connectAuth) return h.response().code(403);
+          const auth=this.funsWithNoEvent[this.connectAuth];
+          if (!auth) return h.response().code(403);
+
+          const authrv=await new Promise((resolve, reject)=> {
+            let p = null;
+            try { 
+              console.log('hello auth');
+
+              p = auth.handler(event, context, (err, success) => {
+                console.log('hello auth handler');
+
+                if (err) {
+                  resolve(h.response().code(403));
+                  return;
+                }
+                resolve();
+              });
+            } 
+            catch (err) {
+              resolve(h.response().code(403));
+            }
+            console.log('hello auth 2');
+
+            if (p) { 
+              console.log('hello auth 3');
+
+              p.then(()=>{
+                resolve();
+              }).catch(err => { 
+                resolve(h.response().code(403));
+              });
+            }
+          });
+          if (authrv) return authrv;
+        
+          const queryStringParameters = parseQuery(request.url);
+          const connection = { connectionId:randomId(), connectionTime:Date.now() };
+          debugLog(`connect:${connection.connectionId}`);
+
+          this.clients.set(ws, connection);
+          let event = wsHelpers.createConnectEvent('$connect', 'CONNECT', connection, this.options);
+          if (Object.keys(queryStringParameters).length > 0) event = { queryStringParameters, ...event };
+          const context = wsHelpers.createContext('$connect');
+
+          doAction(ws, connection.connectionId, '$connect', event, context);
+          return h.response().code(204);
+        }
+        if (!request.payload) return h.response().code(204);
         const connection = this.clients.get(ws);
         const action = request.payload.action || '$default';
+        console.log(`action:${action}`);
+
         debugLog(`action:${action} on connection=${connection.connectionId}`);
         const event = wsHelpers.createEvent(action, 'MESSAGE', connection, request.payload, this.options);
         const context = wsHelpers.createContext(action, this.options);
@@ -602,6 +669,47 @@ class Offline {
     this.serverlessLog(`Action '${event.websocket.route}'`);
   }
 
+  _createConnectWithAutherizerAction(fun, funName, servicePath, funOptions, event) {
+    this._createWsAction(fun, funName, servicePath, funOptions, event);
+    this.connectAuth=event.websocket.authorizer;
+  }
+
+  _createFunctionWithNoEvent(fun, funName, servicePath, funOptions) {
+    let handler; // The lambda function
+    Object.assign(process.env, this.originalEnvironment);
+
+    try {
+      if (this.options.noEnvironment) {
+        // This evict errors in server when we use aws services like ssm
+        const baseEnvironment = {
+          AWS_REGION: 'dev',
+        };
+        if (!process.env.AWS_PROFILE) {
+          baseEnvironment.AWS_ACCESS_KEY_ID = 'dev';
+          baseEnvironment.AWS_SECRET_ACCESS_KEY = 'dev';
+        }
+
+        process.env = Object.assign(baseEnvironment, process.env);
+      }
+      else {
+        Object.assign(
+          process.env,
+          { AWS_REGION: this.service.provider.region },
+          this.service.provider.environment,
+          this.service.functions[funName].environment
+        );
+      }
+      process.env._HANDLER = fun.handler;
+      handler = functionHelper.createHandler(funOptions, this.options);
+    }
+    catch (err) {
+      return this.serverlessLog(`Error while loading ${funName}`, err);
+    }
+
+    this.funsWithNoEvent[funName]=handler;
+    this.serverlessLog(`Not routes for '${funName}'.`);
+  }
+
   _createRoutes() {
     let serviceRuntime = this.service.provider.runtime;
     const defaultContentType = 'application/json';
@@ -656,11 +764,18 @@ class Offline {
       debugLog(funName, 'runtime', serviceRuntime);
       this.serverlessLog(`Routes for ${funName}:`);
 
+      if (!fun.events||!fun.events.length) {
+        this._createFunctionWithNoEvent(fun, funName, servicePath, funOptions);
+
+        return;
+      }
+
       // Adds a route for each http endpoint
       // eslint-disable-next-line
       (fun.events && fun.events.length || this.serverlessLog('(none)')) && fun.events.forEach(event => {
         if (event.websocket) {
-          this._createWsAction(fun, funName, servicePath, funOptions, event);
+          if (event.websocket.route==='$connect'&&!this.options.noAuth&&!event.authorizer) this._createConnectWithAutherizerAction(fun, funName, servicePath, funOptions, event);
+          else this._createWsAction(fun, funName, servicePath, funOptions, event);
           
           return;
         }

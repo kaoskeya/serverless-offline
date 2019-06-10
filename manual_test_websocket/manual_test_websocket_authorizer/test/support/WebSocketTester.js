@@ -2,20 +2,35 @@ const WebSocket = require('ws');
 
 class WebSocketTester {
   constructor() {
-    this.messages=[]; this.receivers=[];
+    this.messages=[]; this.receivers=[]; this.waitingForClose=[]; this.hasClosed=false;
   }
 
-  open(url) {
+  notifyWaitingForClose() {
+    this.waitingForClose.forEach(resolve=>resolve());
+    this.waitingForClose=[]; 
+  }
+
+  open(url, options) {
     if (null!=this.ws) return;
-    const ws=this.ws=new WebSocket(url);
+    const ws=this.ws=new WebSocket(url, options);
     ws.on('message', (message)=>{
       // console.log('Received: '+message);
       if (0<this.receivers.length) this.receivers.shift()(message);
       else this.messages.push(message);
     });
-    return new Promise((resolve/*, reject*/)=> {
+    
+    return new Promise((resolve, reject)=> {
       ws.on('open', ()=>{
         resolve(true);
+      });
+      ws.on('unexpected-response', ()=>{
+        this.hasClosed=true;
+        this.notifyWaitingForClose();
+        resolve(false);
+      });
+      ws.on('close', ()=>{
+        this.notifyWaitingForClose();
+        this.hasClosed=true;
       });
     });
   }
@@ -53,7 +68,20 @@ class WebSocketTester {
   }
 
   close() {
+    this.hasClosed=true;
     if (null!=this.ws) this.ws.close();
+  }
+
+  terminate() {
+    this.hasClosed=true;
+    if (null!=this.ws) this.ws.terminate();
+  }
+  
+  waitForClose() {
+    return new Promise((resolve/*, reject*/)=>{
+      if (this.hasClosed) resolve();
+      else this.waitingForClose.push(resolve);
+    });
   }
 };
 

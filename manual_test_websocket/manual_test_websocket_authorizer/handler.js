@@ -31,16 +31,23 @@ const generatePolicy = function(principalId, effect, resource) {
 
 
 module.exports.connect = async (event, context) => {
-  // console.log('connect:');
+  console.log('connect:')
   return successfullResponse; 
 };
 
-module.export.auth = (event, context, callback) => {
-  //console.log('auth:');
-  const token = event.headers["Authorization"];
+module.exports.auth = (event, context, callback) => {
+  console.log('auth:')
+
+  const token = event.headers['Auth'];
   
-  if ('deny'===token) callback(null, generatePolicy('user', 'Deny', event.methodArn));
-  else callback(null, generatePolicy('user', 'Allow', event.methodArn));;
+  if ('allow'===token) callback(null, generatePolicy('user', 'Allow', event.methodArn));
+  else callback(null, generatePolicy('user', 'Deny', event.methodArn));
+};
+
+module.exports.echo = async (event, context) => {
+  const action = JSON.parse(event.body);
+  await sendToClient(action.message, event.requestContext.connectionId, newAWSApiGatewayManagementApi(event, context)).catch(err=>console.log(err));
+  return successfullResponse; 
 };
 
 const newAWSApiGatewayManagementApi=(event, context)=>{

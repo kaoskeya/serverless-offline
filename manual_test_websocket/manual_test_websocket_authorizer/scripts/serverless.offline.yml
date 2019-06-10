@@ -1,4 +1,8 @@
 plugins:
   - serverless-offline
 
+custom:
+  serverless-offline:
+    port: 3002
+
 

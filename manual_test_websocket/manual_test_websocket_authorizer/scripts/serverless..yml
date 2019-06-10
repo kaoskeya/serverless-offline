@@ -27,9 +27,9 @@ functions:
           authorizer: auth
   auth:
     handler: handler.auth
-  getClientInfo:
-    handler: handler.getClientInfo
+  echo:
+    handler: handler.echo
     events:
       - websocket:
-          route: getClientInfo
+          route: echo
 
