@@ -7,6 +7,7 @@ const { exec } = require('child_process');
 // External dependencies
 const hapi = require('@hapi/hapi');
 const h2o2 = require('@hapi/h2o2');
+const boom = require('@hapi/boom');
 
 // Internal lib
 const debugLog = require('./debugLog');
@@ -448,7 +449,7 @@ class Offline {
     });
     // end COPY PASTE FROM HTTP SERVER CODE
 
-    this.wsServer.register(require('hapi-plugin-websocket')).catch(err => err && this.serverlessLog(err));
+    this.wsServer.register(require('./hapi-plugin-websocket')).catch(err => err && this.serverlessLog(err));
 
     const doAction = (ws, connectionId, name, event, context, doDeafultAction/* , onError */) => {
       const sendError = err => {
@@ -476,43 +477,104 @@ class Offline {
       }
     };
 
-    // const scheme = (server, options)=>{
-    //   return {
-    //       authenticate: (request, h)=>{
-    //         console.log('hello:');
-    //         console.log(request.headers);
+    const scheme = (server, options)=>{
+      return {
+          authenticate: async (request, h)=>{
+            if (!this.connectAuth) return h.unauthenticated();
 
-    //         // const authorization = request.headers['auth'];
-    //         // if (!authorization||authorization!='allow') {
-    //         //   console.log('NOT authenticate:')
-    //         //   throw Boom.unauthorized(null, 'websocket');
-    //         // }
-    //         console.log('authenticate:')
+            const authorization = request.headers['auth'];
+            if (!authorization) throw boom.unauthorized();
 
-    //         return h.authenticated({ credentials: {} });
-    //       }
-    //   };
-    // };
-    // this.wsServer.auth.scheme('websocket', scheme);
-    // this.wsServer.auth.strategy('connect', 'websocket');
+            const auth=this.funsWithNoEvent[this.connectAuth];
+            if (!auth) throw boom.unauthorized();
+
+            const event = wsHelpers.createEvent('$connect', 'MESSAGE', connection, message, this.options);
+            // const context = wsHelpers.createContext(action, this.options);
+
+            const status=await new Promise((resolve)=>{
+              let p = null;
+              try { 
+                console.log('hello')
+                p = auth.handler(event, context, (err, success) => {
+                  if (!err) resolve(403);
+                });
+              } 
+              catch (err) {
+                resolve(403);
+              }
+
+              if (p) { 
+                p.then(()=>{
+
+                }).catch(err => { 
+                  resolve(403);
+                });
+              }
+            });
+            if (status === 403) throw boom.forbidden();
+
+            return h.authenticated({ credentials: {} });
+          }
+      };
+    };
+    this.wsServer.auth.scheme('websocket', scheme);
+    this.wsServer.auth.strategy('connect', 'websocket');
     
     this.wsServer.route({
       method: 'POST', 
       path: '/',
       config: {
-        // auth: 'connect',
+        auth: 'connect',
         payload: { output: 'data', parse: true, allow: 'application/json' },
         plugins: {
           websocket: {
             only: true,
-            initially: true,
+            initially: false,
             connect: ({ ws, req }) => {
-              
+              const parseQuery = queryString => {
+                const query = {}; const parts = queryString.split('?');
+                if (parts.length < 2) return {};
+                const pairs = parts[1].split('&');
+                pairs.forEach(pair => {
+                  const kv = pair.split('=');
+                  query[decodeURIComponent(kv[0])] = decodeURIComponent(kv[1] || '');
+                });
+
+                return query;
+              };
+
+              const queryStringParameters = parseQuery(req.url);
+              const connection = { connectionId:randomId(), connectionTime:Date.now() };
+              // console.log(`connect:${connection.connectionId}`);
+
+              this.clients.set(ws, connection);
+              let event = wsHelpers.createConnectEvent('$connect', 'CONNECT', connection, this.options);
+              if (Object.keys(queryStringParameters).length > 0) event = { queryStringParameters, ...event };
+              const context = wsHelpers.createContext('$connect');
+
+              doAction(ws, connection.connectionId, '$connect', event, context);
+            },
+            message: ({ws, message}) => { 
+              // console.log(`message:${message}`);
+        
+              if (!message) return;
+              const connection = this.clients.get(ws);
+              let json = null;
+              try {
+                json=JSON.parse(message);
+              } catch(err) {console.log(err); }
+
+              const action = json.action || '$default';
+              // console.log(`action:${action} on connection=${connection.connectionId}`);
+              const event = wsHelpers.createEvent(action, 'MESSAGE', connection, message, this.options);
+              const context = wsHelpers.createContext(action, this.options);
+
+              doAction(ws, connection.connectionId, action, event, context, true);
             },
             disconnect: ({ ws }) => {
               const connection = this.clients.get(ws);
               if (!connection) return;
-              debugLog(`disconnect:${connection.connectionId}`);
+              // console.log(`disconnect:${connection.connectionId}`);
               this.clients.delete(ws);
               const event = wsHelpers.createDisconnectEvent('$disconnect', 'DISCONNECT', connection, this.options);
               const context = wsHelpers.createContext('$disconnect', this.options);
@@ -523,79 +585,7 @@ class Offline {
         },
       },
       handler: async (request, h) => {
-        console.log(`handler:${request.url}`);
-        const { initially, ws } = request.websocket();
-        if (initially) {
-          const parseQuery = queryString => {
-            const query = {}; const parts = queryString.split('?');
-            if (parts.length < 2) return {};
-            const pairs = parts[1].split('&');
-            pairs.forEach(pair => {
-              const kv = pair.split('=');
-              query[decodeURIComponent(kv[0])] = decodeURIComponent(kv[1] || '');
-            });
-
-            return query;
-          };
-
-          if (!this.connectAuth) return h.response().code(403);
-          const auth=this.funsWithNoEvent[this.connectAuth];
-          if (!auth) return h.response().code(403);
-
-          const authrv=await new Promise((resolve, reject)=> {
-            let p = null;
-            try { 
-              console.log('hello auth');
-
-              p = auth.handler(event, context, (err, success) => {
-                console.log('hello auth handler');
-
-                if (err) {
-                  resolve(h.response().code(403));
-                  return;
-                }
-                resolve();
-              });
-            } 
-            catch (err) {
-              resolve(h.response().code(403));
-            }
-            console.log('hello auth 2');
-
-            if (p) { 
-              console.log('hello auth 3');
-
-              p.then(()=>{
-                resolve();
-              }).catch(err => { 
-                resolve(h.response().code(403));
-              });
-            }
-          });
-          if (authrv) return authrv;
-        
-          const queryStringParameters = parseQuery(request.url);
-          const connection = { connectionId:randomId(), connectionTime:Date.now() };
-          debugLog(`connect:${connection.connectionId}`);
-
-          this.clients.set(ws, connection);
-          let event = wsHelpers.createConnectEvent('$connect', 'CONNECT', connection, this.options);
-          if (Object.keys(queryStringParameters).length > 0) event = { queryStringParameters, ...event };
-          const context = wsHelpers.createContext('$connect');
-
-          doAction(ws, connection.connectionId, '$connect', event, context);
-          return h.response().code(204);
-        }
-        if (!request.payload) return h.response().code(204);
-        const connection = this.clients.get(ws);
-        const action = request.payload.action || '$default';
-        console.log(`action:${action}`);
-
-        debugLog(`action:${action} on connection=${connection.connectionId}`);
-        const event = wsHelpers.createEvent(action, 'MESSAGE', connection, request.payload, this.options);
-        const context = wsHelpers.createContext(action, this.options);
-
-        doAction(ws, connection.connectionId, action, event, context, true);
+        // console.log(`handler:${request.url}`);
 
         return h.response().code(204);
       },

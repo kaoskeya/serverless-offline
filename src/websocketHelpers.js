@@ -38,7 +38,7 @@ const createRequestContext = (action, eventType, connection) => {
 module.exports.createEvent = (action, eventType, connection, payload, options) => {
   const event = { 
     requestContext: createRequestContext(action, eventType, connection),
-    body: JSON.stringify(payload),
+    body: payload,
     isBase64Encoded: false,
     apiGatewayUrl: `http${options.httpsProtocol ? 's' : ''}://${options.host}:${options.port + 1}`,
   };
