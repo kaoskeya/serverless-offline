@@ -1,7 +1,11 @@
 'use strict';
 
-const { DateTime } = require('luxon');
-const { createUniqueId } = require('./utils');
+const {
+  DateTime
+} = require('luxon');
+const {
+  createUniqueId
+} = require('./utils');
 
 // TODO this should be probably moved to utils, and combined with other header
 // functions and utilities
@@ -57,7 +61,11 @@ const createRequestContext = (action, eventType, connection) => {
     routeKey: action,
     stage: 'local',
   };
-  if (connection) requestContext = { connectedAt: connection.connectionTime, connectionId:connection.connectionId, ...requestContext };
+  if (connection) requestContext = {
+    connectedAt: connection.connectionTime,
+    connectionId: connection.connectionId,
+    ...requestContext
+  };
 
   return requestContext;
 };
@@ -72,21 +80,24 @@ exports.createEvent = (action, connection, payload) => {
   return event;
 };
 
-exports.createAuthEvent = (connection, headers1, authHeader, options) => {
+exports.createAuthEvent = (connection, headers1, authHeader, options, queryString) => {
   // const toUpperCase = str => {
   //   const splitStr = str.toLowerCase().split('-');
   //   for (let i = 0; i < splitStr.length; i++) {
   //     splitStr[i] = splitStr[i].charAt(0).toUpperCase() + splitStr[i].substring(1);     
   //   }
-    
+
   //   return splitStr.join('-'); 
   // };
-  const headers2 = { ...headers1 };
-  delete headers2.connection; delete headers2.upgrade;
+  const headers2 = {
+    ...headers1
+  };
+  delete headers2.connection;
+  delete headers2.upgrade;
 
   const headers = {};
-  const auth=authHeader.toLowerCase();
-  const Auth=authHeader;
+  const auth = authHeader ? authHeader.toLowerCase() : null;
+  const Auth = authHeader;
 
   Object.keys(headers2).map(key => headers[key
     .replace('sec-websocket-extensions', 'Sec-WebSocket-Extensions')
@@ -97,19 +108,19 @@ exports.createAuthEvent = (connection, headers1, authHeader, options) => {
   headers['X-Forwarded-For'] = '127.0.0.1';
   headers['X-Amzn-Trace-Id'] = `Root=${createUniqueId()}`;
   headers['X-Forwarded-Port'] = `${options.websocketPort}`;
-  headers['X-Forwarded-Proto'] = `http${options.httpsProtocol ? 's' : ''}`; 
-  headers['content-length'] = '0'; 
-  headers.Connection = 'upgrade'; 
+  headers['X-Forwarded-Proto'] = `http${options.httpsProtocol ? 's' : ''}`;
+  headers['content-length'] = '0';
+  headers.Connection = 'upgrade';
   headers.Upgrade = 'websocket';
   delete headers['user-agent'];
 
   const multiValueHeaders = createMultiValueHeaders(headers);
   const event = {
-    methodArn:'local',
+    methodArn: 'local',
     stageVariables: {},
     type: 'REQUEST',
     multiValueQueryStringParameters: {},
-    queryStringParameters: {},
+    queryStringParameters: queryString,
     headers,
     multiValueHeaders,
     requestContext: createRequestContext('$connect', 'CONNECT', connection),
@@ -118,8 +129,11 @@ exports.createAuthEvent = (connection, headers1, authHeader, options) => {
   return event;
 };
 exports.createConnectEvent = (connection, headers1, options) => {
-  const headers2 = { ...headers1 };
-  delete headers2.connection; delete headers2.upgrade;
+  const headers2 = {
+    ...headers1
+  };
+  delete headers2.connection;
+  delete headers2.upgrade;
 
   const headers = {};
   Object.keys(headers2).map(key => headers[key
@@ -131,7 +145,7 @@ exports.createConnectEvent = (connection, headers1, options) => {
   headers['X-Forwarded-For'] = '127.0.0.1';
   headers['X-Amzn-Trace-Id'] = `Root=${createUniqueId()}`;
   headers['X-Forwarded-Port'] = `${options.websocketPort}`;
-  headers['X-Forwarded-Proto'] = `http${options.httpsProtocol ? 's' : ''}`;  
+  headers['X-Forwarded-Proto'] = `http${options.httpsProtocol ? 's' : ''}`;
 
   const multiValueHeaders = createMultiValueHeaders(headers);
   const event = {

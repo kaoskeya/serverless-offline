@@ -4,7 +4,9 @@
 const moment = require('moment');
 const chai = require('chai');
 
-const {expect} = chai;
+const {
+  expect
+} = chai;
 const chaiHttp = require('chai-http');
 
 chai.use(chaiHttp);
@@ -14,16 +16,22 @@ const WebSocketTester = require('../support/WebSocketTester');
 
 describe('serverless', () => {
   describe('with Authorizer [WebSocket] support', () => {
-    let clients = []; let req = null;
+    let clients = [];
+    let req = null;
     const createWebSocket = async options => {
       const ws = new WebSocketTester();
-      let url = endpoint; let wsOptions = null;
+      let url = endpoint;
+      let wsOptions = null;
       if (options && options.qs) url = `${endpoint}?${options.qs}`;
-      if (options && options.headers) wsOptions = { headers:options.headers };
+      if (options && options.headers) wsOptions = {
+        headers: options.headers
+      };
       const hasOpened = await ws.open(url, wsOptions);
       if (!hasOpened) {
-        try { ws.close(); } catch (err) {} // eslint-disable-line brace-style, no-empty
-        
+        try {
+          ws.close();
+        } catch (err) {} // eslint-disable-line brace-style, no-empty
+
         return;
       }
       clients.push(ws);
@@ -53,12 +61,20 @@ describe('serverless', () => {
       }));
       clients = [];
     });
-    const now = Date.now(); const notNow = now - 1000 * 60 * 10;
+    const now = Date.now();
+    const notNow = now - 1000 * 60 * 10;
 
     it('should open a WebSocket with good auth', async () => {
-      const ws = await createWebSocket({ headers:{ Auth123:`${now}` } }); // ${now}`}});
+      const ws = await createWebSocket({
+        headers: {
+          Auth123: `${now}`
+        }
+      }); // ${now}`}});
       expect(ws).not.to.be.undefined;
-      ws.send(JSON.stringify({ action:'echo', message:`${now}` }));
+      ws.send(JSON.stringify({
+        action: 'echo',
+        message: `${now}`
+      }));
       expect(await ws.receive1()).to.equal(`${now}`);
     }).timeout(timeout);
 
@@ -66,14 +82,22 @@ describe('serverless', () => {
       const ws = await createWebSocket();
       expect(ws).to.be.undefined;
     }).timeout(timeout);
-    
+
     it('should not open a WebSocket with bad auth', async () => {
-      const ws = await createWebSocket({ headers:{ Auth123:`${notNow}` } });
+      const ws = await createWebSocket({
+        headers: {
+          Auth123: `${notNow}`
+        }
+      });
       expect(ws).to.be.undefined;
     }).timeout(timeout);
 
     it('should not open a WebSocket with auth function throwing exception', async () => {
-      const ws = await createWebSocket({ headers:{ Auth123:'This is not a number so auth function with throw exception on offline.' } });
+      const ws = await createWebSocket({
+        headers: {
+          Auth123: 'This is not a number so auth function with throw exception on offline.'
+        }
+      });
       expect(ws).to.be.undefined;
     }).timeout(timeout);
 
@@ -81,7 +105,7 @@ describe('serverless', () => {
       const res = await req.get('')
         .set('Sec-WebSocket-Version', '13').set('Sec-WebSocket-Key', 'tqDb9pU/uwEchHWtz91LRA==').set('Connection', 'Upgrade')
         .set('Upgrade', 'websocket')
-        .set('Sec-WebSocket-Extensions', 'permessage-deflate; client_max_window_bits');// .set('Authorization', user.accessToken);
+        .set('Sec-WebSocket-Extensions', 'permessage-deflate; client_max_window_bits'); // .set('Authorization', user.accessToken);
       expect(res).to.have.status(401);
     }).timeout(timeout);
 
@@ -93,7 +117,7 @@ describe('serverless', () => {
         .set('Auth123', `${notNow}`);
       expect(res).to.have.status(403);
     }).timeout(timeout);
-    
+
     const createExpectedEvent = (connectionId, action, eventType, actualEvent) => {
       const url = new URL(endpoint);
       const expected = {
@@ -137,7 +161,7 @@ describe('serverless', () => {
     };
 
     const createExpectedConnectHeaders = actualHeaders => {
-      const url = new URL(endpoint); 
+      const url = new URL(endpoint);
       const expected = {
         Host: url.port ? `${url.hostname}:${url.port}` : url.hostname,
         Auth123: `${now}`,
@@ -164,16 +188,37 @@ describe('serverless', () => {
     };
 
     it('should receive correct call info', async () => {
-      const ws = await createWebSocket({ headers:{ Auth123:`${now}` } });
-      await ws.send(JSON.stringify({ action:'registerListener' }));
+      const ws = await createWebSocket({
+        headers: {
+          Auth123: `${now}`
+        }
+      });
+      await ws.send(JSON.stringify({
+        action: 'registerListener'
+      }));
       await ws.receive1();
 
       // auth
-      await createWebSocket({ headers:{ Auth123:`${now}` } });
+      await createWebSocket({
+        headers: {
+          Auth123: `${now}`
+        }
+      });
       const auth = JSON.parse(await ws.receive1());
       const timeNow = Date.now();
-      const expectedAuthInfo = { id:auth.info.event.requestContext.connectionId, event:{ headers:createExpectedConnectHeaders(auth.info.event.headers), multiValueHeaders:createExpectedConnectMultiValueHeaders(auth.info.event.headers), ...createExpectedEvent(auth.info.event.requestContext.connectionId, '$connect', 'CONNECT', auth.info.event) } };
-      expect(auth).to.deep.equal({ action:'update', event:'auth', info:expectedAuthInfo });
+      const expectedAuthInfo = {
+        id: auth.info.event.requestContext.connectionId,
+        event: {
+          headers: createExpectedConnectHeaders(auth.info.event.headers),
+          multiValueHeaders: createExpectedConnectMultiValueHeaders(auth.info.event.headers),
+          ...createExpectedEvent(auth.info.event.requestContext.connectionId, '$connect', 'CONNECT', auth.info.event)
+        }
+      };
+      expect(auth).to.deep.equal({
+        action: 'update',
+        event: 'auth',
+        info: expectedAuthInfo
+      });
       expect(auth.info.event.requestContext.requestTimeEpoch).to.be.within(auth.info.event.requestContext.connectedAt - 10, auth.info.event.requestContext.requestTimeEpoch + 10);
       expect(auth.info.event.requestContext.connectedAt).to.be.within(timeNow - timeout, timeNow);
       expect(auth.info.event.requestContext.requestTimeEpoch).to.be.within(timeNow - timeout, timeNow);

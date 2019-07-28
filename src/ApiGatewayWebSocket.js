@@ -102,8 +102,10 @@ module.exports = class ApiGatewayWebSocket {
 
         return;
       }
+
       function cb(err, result) {
-        if (!err) resolve(result); else handleError(err);
+        if (!err) resolve(result);
+        else handleError(err);
       }
 
       // TEMP
@@ -116,8 +118,7 @@ module.exports = class ApiGatewayWebSocket {
       let p = null;
       try {
         p = action.handler(event, context, cb);
-      }
-      catch (err) {
+      } catch (err) {
         handleError(err);
       }
 
@@ -126,66 +127,73 @@ module.exports = class ApiGatewayWebSocket {
 
     const encodeConnectionId = unencoded => unencoded.replace(new RegExp('/', 'g'), 'S'); // relaces all '/' chars with 'S'
 
-    const scheme = (/* server, options */) => {
-      
+    const scheme = ( /* server, options */ ) => {
+
       const rv = {
         authenticate: async (request, h) => {
           if (!this.connectAuth) return h.unauthenticated();
 
-          const authorization = request.headers[this.connectAuth.header.toLowerCase()];
+          const authorization = this.connectAuth.isQueryString ?
+            request.query[this.connectAuth.header] :
+            request.headers[this.connectAuth.header.toLowerCase()];
+
           if (!authorization) throw boom.unauthorized();
           const auth = this.funsWithNoEvent[this.connectAuth.name];
+
           if (!auth) throw boom.unauthorized();
 
           const connectionId = encodeConnectionId(request.headers['sec-websocket-key']);
           let connection = this.clients[connectionId];
-          if (!connection) { 
-            connection = { connectionId, connectionTime:Date.now() };
+          if (!connection) {
+            connection = {
+              connectionId,
+              connectionTime: Date.now()
+            };
             this.clients[connectionId] = connection;
           }
 
-          const event = wsHelpers.createAuthEvent(connection, request.headers, this.connectAuth.header, this.options);
+          const event = this.connectAuth.isQueryString ?
+            wsHelpers.createAuthEvent(connection, request.headers, this.connectAuth.header, this.options, request.query) :
+            wsHelpers.createAuthEvent(connection, request.query, this.connectAuth.header, this.options, request.query);
           const checkPolicy = policy => {
             if (
-              policy && 
-              policy.policyDocument && 
+              policy &&
+              policy.policyDocument &&
               policy.policyDocument.Statement &&
-              policy.policyDocument.Statement[0] && 
+              policy.policyDocument.Statement[0] &&
               policy.policyDocument.Statement[0].Effect === 'Allow') return 200;
-            
+
             return 403;
           };
           const status = await new Promise(resolve => {
             function cb(err, policy) {
-              if (err) { 
+              if (err) {
                 this.serverlessLog(err);
                 resolve(403);
-              } 
-              else {
+              } else {
                 resolve(checkPolicy(policy));
               }
             }
-      
+
             // TEMP
             const func = {
               ...auth.fun,
               name: this.connectAuth.name,
             };
-          
+
             const context = new LambdaContext(func, this.service.provider, cb);
             let p = null;
-            try { 
+            try {
               p = auth.handler(event, context, cb);
-            } 
-            catch (err) {
+            } catch (err) {
               this.serverlessLog(err);
               resolve(403);
             }
 
-            if (p) { 
+            if (p) {
               p.then(policy => {
                 resolve(checkPolicy(policy));
-              }).catch(err => { 
+              }).catch(err => {
                 this.serverlessLog(err);
                 resolve(403);
               });
@@ -193,10 +201,12 @@ module.exports = class ApiGatewayWebSocket {
           });
           if (status === 403) throw boom.forbidden();
 
-          return h.authenticated({ credentials: {} });
+          return h.authenticated({
+            credentials: {}
+          });
         },
       };
-      
+
       return rv;
     };
     this.wsServer.auth.scheme('websocket', scheme);
@@ -207,25 +217,36 @@ module.exports = class ApiGatewayWebSocket {
       path: '/',
       config: {
         auth: 'connect',
-        payload: { output: 'data', parse: true, allow: 'application/json' },
+        payload: {
+          output: 'data',
+          parse: true,
+          allow: 'application/json'
+        },
         plugins: {
           websocket: {
             only: true,
             initially: false,
-            connect: ({ ws, req }) => {
+            connect: ({
+              ws,
+              req
+            }) => {
               const connection = this.clients[encodeConnectionId(req.headers['sec-websocket-key'])];
               if (!connection) return;
               debugLog(`connect:${connection.connectionId}`);
               connection.ws = ws;
             },
-            message: ({ ws, req, message }) => { 
+            message: ({
+              ws,
+              req,
+              message
+            }) => {
               debugLog(`message:${message}`);
-        
+
               if (!message) return;
               const connection = this.clients[encodeConnectionId(req.headers['sec-websocket-key'])];
               let json = null;
-              try { 
-                json = JSON.parse(message); 
+              try {
+                json = JSON.parse(message);
               } catch (err) {} // eslint-disable-line brace-style, no-empty
 
               let actionName = null;
@@ -235,8 +256,7 @@ module.exports = class ApiGatewayWebSocket {
                   this.websocketsApiRouteSelectionExpression.replace('$request.body.', '').split('.').forEach(key => {
                     if (actionName) actionName = actionName[key];
                   });
-                }
-                else actionName = null;
+                } else actionName = null;
               }
               if (typeof actionName !== 'string') actionName = null;
               const action = actionName || '$default';
@@ -244,10 +264,16 @@ module.exports = class ApiGatewayWebSocket {
               const event = wsHelpers.createEvent(action, connection, message, this.options);
 
               doAction(action, event, true).catch(() => {
-                if (ws.readyState === /* OPEN */1) ws.send(JSON.stringify({ message:'Internal server error', connectionId:connection.connectionId, requestId:'1234567890' }));
+                if (ws.readyState === /* OPEN */ 1) ws.send(JSON.stringify({
+                  message: 'Internal server error',
+                  connectionId: connection.connectionId,
+                  requestId: '1234567890'
+                }));
               });
             },
-            disconnect: ({ req }) => {
+            disconnect: ({
+              req
+            }) => {
               const connection = this.clients[encodeConnectionId(req.headers['sec-websocket-key'])];
               if (!connection) return;
               debugLog(`disconnect:${connection.connectionId}`);
@@ -264,23 +290,31 @@ module.exports = class ApiGatewayWebSocket {
         const queryStringParameters = Object.fromEntries(request.url.searchParams.entries());
         const connectionId = encodeConnectionId(request.headers['sec-websocket-key']);
         let connection = this.clients[connectionId];
-        if (!connection) { 
-          connection = { connectionId, connectionTime:Date.now() };
+        if (!connection) {
+          connection = {
+            connectionId,
+            connectionTime: Date.now()
+          };
           this.clients[connectionId] = connection;
         }
         debugLog(`handling connect request:${connection.connectionId}`);
 
         let event = wsHelpers.createConnectEvent(connection, request.headers, this.options);
-        if (Object.keys(queryStringParameters).length > 0) event = { queryStringParameters, ...event };
+        if (Object.keys(queryStringParameters).length > 0) event = {
+          queryStringParameters,
+          ...event
+        };
 
         const result = await doAction('$connect', event, false).catch(err => {
           this.serverlessLog(err);
 
-          return { statusCode: 502 };
+          return {
+            statusCode: 502
+          };
         });
 
 
-        return h.response().code(result && result.statusCode?result.statusCode:200);
+        return h.response().code(result && result.statusCode ? result.statusCode : 200);
       },
     });
 
@@ -293,7 +327,11 @@ module.exports = class ApiGatewayWebSocket {
     this.wsServer.route({
       method: 'POST',
       path: '/@connections/{connectionId}',
-      config: { payload: { parse: false } },
+      config: {
+        payload: {
+          parse: false
+        }
+      },
       handler: (request, h) => {
         debugLog(`got POST to ${request.url}`);
         const connection = this.clients[request.params.connectionId];
@@ -309,7 +347,11 @@ module.exports = class ApiGatewayWebSocket {
     this.wsServer.route({
       method: 'DELETE',
       path: '/@connections/{connectionId}',
-      config: { payload: { parse: false } },
+      config: {
+        payload: {
+          parse: false
+        }
+      },
       handler: (request, h) => {
         debugLog(`got DELETE to ${request.url}`);
         const connection = this.clients[request.params.connectionId];
@@ -317,7 +359,7 @@ module.exports = class ApiGatewayWebSocket {
         if (!connection || !connection.ws) return h.response().code(410);
         connection.ws.close();
         debugLog(`closed connection:${request.params.connectionId}`);
-        
+
         return h.response().code(204);
       },
     });
@@ -340,11 +382,11 @@ module.exports = class ApiGatewayWebSocket {
         }
 
         process.env = Object.assign(baseEnvironment, process.env);
-      }
-      else {
+      } else {
         Object.assign(
-          process.env,
-          { AWS_REGION: this.service.provider.region },
+          process.env, {
+            AWS_REGION: this.service.provider.region
+          },
           this.service.provider.environment,
           this.service.functions[funName].environment
         );
@@ -352,13 +394,18 @@ module.exports = class ApiGatewayWebSocket {
 
       process.env._HANDLER = fun.handler;
       handler = functionHelper.createHandler(funOptions, this.options);
-    }
-    catch (error) {
+    } catch (error) {
       return this.serverlessLog(`Error while loading ${funName}`, error);
     }
 
     const actionName = event.websocket.route;
-    const action = { funName, fun, funOptions, servicePath, handler };
+    const action = {
+      funName,
+      fun,
+      funOptions,
+      servicePath,
+      handler
+    };
 
     this.actions[actionName] = action;
     this.serverlessLog(`Action '${event.websocket.route}'`);
@@ -367,19 +414,42 @@ module.exports = class ApiGatewayWebSocket {
   _createConnectWithAutherizerAction(fun, funName, servicePath, funOptions, event, funsWithNoEvent) {
     this.funsWithNoEvent = funsWithNoEvent;
     this._createAction(fun, funName, servicePath, funOptions, event);
+    this.serverlessLog('----------------------------------------------------------------');
+    this.serverlessLog('event.websocket.authorizer: ');
+    this.serverlessLog(JSON.stringify(event.websocket.authorizer));
+    this.serverlessLog('----------------------------------------------------------------');
     if (typeof event.websocket.authorizer === 'object') {
-      const {name, identitySource} = event.websocket.authorizer;
-      if (identitySource && identitySource[0] && identitySource[0].startsWith('route.request.header.')) this.connectAuth = { name, header:identitySource[0].replace('route.request.header.', '')};
-      else this.serverlessLog('ERROR: WebSocket Authorizer only supports header authorization.');
-    } else this.connectAuth = { name:event.websocket.authorizer, header:'Auth'};
+      const {
+        name,
+        identitySource
+      } = event.websocket.authorizer;
+      if (identitySource && identitySource[0] && identitySource[0].startsWith('route.request.header.')) {
+        this.connectAuth = {
+          name,
+          header: identitySource[0].replace('route.request.header.', '')
+        };
+      } else if (identitySource && identitySource[0] && identitySource[0].startsWith('route.request.querystring.')) {
+        this.connectAuth = {
+          name,
+          header: identitySource[0].replace('route.request.querystring.', ''),
+          isQueryString: true,
+        };
+      } else {
+        this.serverlessLog('----------------------------------------------------------------');
+        this.serverlessLog('UNSUPPORTED event.websocket.authorizer: ');
+        this.serverlessLog('----------------------------------------------------------------');
+      }
+    } else this.connectAuth = {
+      name: event.websocket.authorizer,
+      header: 'Auth'
+    };
   }
 
   // All done, we can listen to incomming requests
   async _listen() {
     try {
       await this.wsServer.start();
-    }
-    catch (error) {
+    } catch (error) {
       console.error(`Unexpected error while starting serverless-offline websocket server on port ${this.options.websocketPort}:`, error);
       process.exit(1);
     }
