@@ -135,6 +135,8 @@ exports.createConnectEvent = (connection, headers1, options) => {
   delete headers2.connection;
   delete headers2.upgrade;
 
+  // console.log(connection, headers1, options);
+
   const headers = {};
   Object.keys(headers2).map(key => headers[key
     .replace('sec-websocket-extensions', 'Sec-WebSocket-Extensions')

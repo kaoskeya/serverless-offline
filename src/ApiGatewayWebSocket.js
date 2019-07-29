@@ -199,6 +199,7 @@ module.exports = class ApiGatewayWebSocket {
               });
             }
           });
+
           if (status === 403) throw boom.forbidden();
 
           return h.authenticated({
@@ -209,6 +210,10 @@ module.exports = class ApiGatewayWebSocket {
 
       return rv;
     };
+
+    console.log({
+      scheme
+    });
     this.wsServer.auth.scheme('websocket', scheme);
     this.wsServer.auth.strategy('connect', 'websocket');
 
